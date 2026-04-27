@@ -1,11 +1,15 @@
+mod config;
 mod db;
 mod benchmarks;
+mod error;
+mod horizon;
+mod logging;
 mod metrics;
 mod profiling;
 mod state;
 mod stellar;
 mod xdr;
-
+mod ai_query;
 use axum::{
     extract::{ConnectInfo, Extension, Request, State},
     http::{
@@ -16,19 +20,24 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use fluid_server::config::load_config;
-use db::create_pool;
-use fluid_server::error::AppError;
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 use serde::{Deserialize, Serialize};
+use tracing::{error, info};
+
+use ai_query::{handle_ai_query, QueryRequest, QueryFilters};
+use config::load_config;
+use db::create_pool;
+use error::AppError;
+use fluid_server::archive::run_archival_job;
+use fluid_server::grpc::serve_grpc;
+use horizon::HorizonNodeStatus;
+use logging::init_logging_from_env;
 use sqlx::postgres::PgPool;
 use state::{
-    iso_now, utc_day_start_ms, ApiKeyConfig, AppState, HealthFeePayer, HorizonNodeStatus,
-    RateLimitEntry, RateLimitResult, SignerPool, TransactionRecord, API_KEYS,
-    REVALIDATION_INTERVAL_SECS,
+    iso_now, utc_day_start_ms, ApiKeyConfig, AppState, HealthFeePayer, RateLimitEntry,
+    RateLimitResult, SignerPool, TransactionRecord, API_KEYS, REVALIDATION_INTERVAL_SECS,
 };
-use std::{net::SocketAddr, sync::Arc, time::Instant};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
-use tracing::{error, info};
 use xdr::summarize_transaction;
 
 #[derive(Serialize)]
@@ -43,7 +52,8 @@ struct HealthResponse {
 #[serde(deny_unknown_fields)]
 struct FeeBumpRequest {
     submit: Option<bool>,
-    token: Option<String>,
+    #[serde(rename = "token")]
+    _token: Option<String>,
     xdr: String,
 }
 
@@ -51,7 +61,8 @@ struct FeeBumpRequest {
 #[serde(deny_unknown_fields)]
 struct FeeBumpBatchRequest {
     submit: Option<bool>,
-    token: Option<String>,
+    #[serde(rename = "token")]
+    _token: Option<String>,
     xdrs: Vec<String>,
 }
 
@@ -161,16 +172,36 @@ async fn verify_db(db_pool: Option<Extension<Arc<PgPool>>>) -> Json<DbVerificati
     })
 }
 
+// AI QUERY HANDLER (AXUM STYLE)
+async fn ai_query_handler(Json(req): Json<QueryRequest>) -> Json<QueryFilters> {
+    let filters = handle_ai_query(req.query);
+
+    Json(filters)
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fluid_server=info,tower_http=info".into()),
-        )
-        .init();
+    match init_logging_from_env() {
+        Ok(report) => {
+            info!(
+                "Logging initialized with provider={:?}, endpoint={:?}",
+                report.provider, report.endpoint
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "Failed to initialize log aggregation: {error}. Falling back to console logging."
+            );
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| "fluid_server=info,tower_http=info".into()),
+                )
+                .try_init();
+        }
+    }
 
     if let Err(error) = run().await {
         error!("{}", error.message);
@@ -183,6 +214,42 @@ async fn run() -> Result<(), AppError> {
     let port = config.port;
     let allowed_origins = config.allowed_origins.clone();
     let state = AppState::new(config, &secrets)?;
+
+    // Create database pool for archival job
+    let db_pool = match create_pool().await {
+        Ok(pool) => {
+            info!("Database pool created successfully for archival job");
+            Some(Arc::new(pool))
+        }
+        Err(error) => {
+            error!("Database pool unavailable, archival job will not run: {error}");
+            None
+        }
+    };
+
+    // Start archival job if database pool is available
+    if let Some(pool) = db_pool.clone() {
+        tokio::spawn(async move {
+            info!("Starting transaction archival job...");
+            
+            // Run once on startup
+            if let Err(e) = run_archival_job(&pool).await {
+                error!("Initial archival job failed: {}", e);
+            }
+            
+            // Then every 30 days (30 * 24 * 3600 seconds)
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30 * 24 * 3600));
+            loop {
+                interval.tick().await;
+                info!("Running monthly transaction archival job...");
+                if let Err(e) = run_archival_job(&pool).await {
+                    error!("Monthly archival job failed: {}", e);
+                } else {
+                    info!("Monthly archival job completed successfully");
+                }
+            }
+        });
+    }
 
     // Background task: periodically revalidate signer accounts and refresh balances
     {
@@ -208,6 +275,7 @@ async fn run() -> Result<(), AppError> {
         .route("/dashboard", get(dashboard))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
+        .route("/ai/query", post(ai_query_handler))
         .route("/verify-db", get(verify_db))
         .route("/fee-bump", post(fee_bump))
         .route("/fee-bump/batch", post(fee_bump_batch))
@@ -228,10 +296,17 @@ async fn run() -> Result<(), AppError> {
         }
     };
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!("Fluid server (Rust) listening on {addr}");
+    let http_addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let grpc_port: u16 = std::env::var("GRPC_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(50051);
+    let grpc_addr = SocketAddr::from(([0, 0, 0, 0], grpc_port));
 
-    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|error| {
+    info!("Starting Fluid Rust services");
+    info!("Fluid server (Rust) listening on {http_addr}");
+
+    let listener = tokio::net::TcpListener::bind(http_addr).await.map_err(|error| {
         AppError::new(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             "INTERNAL_ERROR",
@@ -239,18 +314,29 @@ async fn run() -> Result<(), AppError> {
         )
     })?;
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+    tokio::try_join!(
+        async {
+            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .map_err(|error| {
+                    AppError::new(
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_ERROR",
+                        format!("Rust server exited unexpectedly: {error}"),
+                    )
+                })
+        },
+        async {
+            serve_grpc(grpc_addr).await.map_err(|error| {
+                AppError::new(
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    format!("gRPC server exited unexpectedly: {error}"),
+                )
+            })
+        }
     )
-    .await
-    .map_err(|error| {
-        AppError::new(
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "INTERNAL_ERROR",
-            format!("Rust server exited unexpectedly: {error}"),
-        )
-    })
+    .map(|_| ())
 }
 
 fn build_cors_layer(allowed_origins: &[String]) -> CorsLayer {
@@ -321,17 +407,11 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
 async fn add_transaction(
     State(state): State<AppState>,
     Json(request): Json<AddTransactionRequest>,
-) -> Result<Json<AddTransactionResponse>, AppError> {
-    if request.hash.trim().is_empty() {
-        return Err(AppError::new(
-            axum::http::StatusCode::BAD_REQUEST,
-            "INVALID_XDR",
-            "Transaction hash is required",
-        ));
-    }
-
+)
+-> Result<Json<AddTransactionResponse>, AppError> {
     let status = request.status.unwrap_or_else(|| "pending".to_string());
     let now = iso_now();
+
     state.transaction_store.lock().await.insert(
         request.hash.clone(),
         TransactionRecord {
@@ -355,12 +435,13 @@ async fn list_transactions(State(state): State<AppState>) -> Json<TransactionsRe
         .values()
         .cloned()
         .collect();
+
     Json(TransactionsResponse { transactions })
 }
 
 async fn fee_bump(
-    State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<FeeBumpRequest>,
 ) -> Result<Response, AppError> {
@@ -373,7 +454,7 @@ async fn fee_bump(
         .global_limiter
         .check(&format!("ip:{}", addr.ip()))
         .await?;
-    let api_limit = check_api_key_rate_limit(state, &api_key_config).await?;
+    let api_limit = check_api_key_rate_limit(&state, &api_key_config).await?;
 
     let result = process_fee_bump_request(
         &state,
@@ -414,7 +495,7 @@ async fn fee_bump_batch(
         .global_limiter
         .check(&format!("ip:{}", addr.ip()))
         .await?;
-    let api_limit = check_api_key_rate_limit(state, &api_key_config).await?;
+    let api_limit = check_api_key_rate_limit(&state, &api_key_config).await?;
 
     let submit = body.submit.unwrap_or(false);
     let mut results = Vec::with_capacity(body.xdrs.len());
@@ -661,8 +742,8 @@ async fn check_api_key_rate_limit(
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             "RATE_LIMITED",
             format!(
-                "API key rate limit exceeded for {} ({} tier).",
-                mask_api_key(api_key.key),
+                "API key rate limit exceeded for {} ({}).",
+                api_key.name,
                 api_key.tier
             ),
         ));

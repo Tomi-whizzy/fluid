@@ -1,14 +1,18 @@
 {
   "name": "fluid-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fluid client library for gasless Stellar transactions with Web Worker support",
   "main": "dist/index.js",
+  "bin": {
+    "fluid": "./dist/cli.js"
+  },
   "browser": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/**/*",
     "src/**/*",
-    "README.md"
+    "README.md",
+    "tsup.config.ts"
   ],
   "exports": {
     ".": {
@@ -24,12 +28,18 @@
   "scripts": {
     "build": "tsc",
     "build:worker": "tsc src/workers/signingWorker.ts --outDir dist --target ES2020 --module ESNext --lib ES2020,WebWorker,DOM",
+    "build:standalone": "tsup --config tsup.config.ts",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "lint": "echo \"No lint configured\"",
     "format:check": "echo \"No format check configured\"",
     "docs": "typedoc",
     "test": "vitest run",
+    "sandbox:write-compose": "ts-node src/sandbox/writeLocalSandboxCompose.ts",
+    "sandbox:up": "npm run sandbox:write-compose && docker compose -f src/sandbox/docker-compose.local.yml up -d --build",
+    "sandbox:down": "docker compose -f src/sandbox/docker-compose.local.yml down --remove-orphans",
+    "sandbox:logs": "docker compose -f src/sandbox/docker-compose.local.yml logs -f --tail=200",
+    "sandbox:ps": "docker compose -f src/sandbox/docker-compose.local.yml ps",
     "demo": "python -m http.server 8080",
     "demo:sac-transfer-xdr": "ts-node src/examples/sacTransferXdr.ts",
     "demo:wait-confirmation": "ts-node src/demo/waitForConfirmation.ts",
@@ -48,6 +58,7 @@
   ],
   "author": "",
   "license": "ISC",
+  "sideEffects": false,
   "dependencies": {
     "@stellar/stellar-sdk": "^11.3.0",
     "dotenv": "^16.3.1"
@@ -59,6 +70,7 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/react": "^18.3.18",
+    "jsdom": "^29.0.2",
     "msw": "^2.12.14",
     "rollup-plugin-visualizer": "^7.0.1",
     "stellar-sdk-v10": "npm:stellar-sdk@10.4.1",

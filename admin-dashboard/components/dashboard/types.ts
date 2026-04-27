@@ -4,11 +4,14 @@ export type DashboardSignerStatus =
   | "Sequence Error"
   | "Inactive";
 
+export type PartnerStatus = "pending" | "approved" | "rejected";
+
 export interface DashboardTransaction {
   id: string;
   hash: string;
   amount: string;
   asset: string;
+  category: string;
   status: "pending" | "submitted" | "success" | "failed";
   tenantId: string;
   createdAt: string;
@@ -31,9 +34,30 @@ export interface TransactionHistoryRow {
   id: string;
   timestamp: string;
   innerHash: string;
+  category: string;
   status: TransactionStatus;
   costStroops: number;
   tenant: string;
+}
+
+export interface SpendForecastData {
+  alert: boolean;
+  averageDailySpendXlm: number;
+  currentBalanceXlm: number;
+  historicalBalance: Array<{ date: string; balanceXlm: number }>;
+  projectedBalance: Array<{ date: string; balanceXlm: number }>;
+  runwayDays: number | null;
+  runwayMessage: string;
+  source: "live" | "sample";
+  spendSeries: Array<{ date: string; spendXlm: number }>;
+}
+
+export interface FeeMultiplierData {
+  congestionLevel: "low" | "high";
+  multiplier: number;
+  reason: string;
+  source: "live" | "sample";
+  updatedAt: string;
 }
 
 export interface TenantUsageRow {
@@ -44,12 +68,15 @@ export interface TenantUsageRow {
   failedCount: number;
 }
 
+export type ChainId = "stellar" | "evm" | "solana" | "cosmos";
+
 export interface ApiKey {
   id: string;
   key: string;
   prefix: string;
   tenantId: string;
   active: boolean;
+  allowedChains: ChainId[];
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +106,29 @@ export interface SubscriptionTierPageData {
   source: "live" | "sample";
 }
 
+export type WebhookEventType = "tx.success" | "tx.failed" | "balance.low";
+
+export interface WebhookTenantSettings {
+  tenantId: string;
+  tenantName: string | null;
+  webhookUrl: string | null;
+  eventTypes: WebhookEventType[];
+  updatedAt: string | null;
+}
+
+export interface WebhookDlqItem {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  deliveryId: string;
+  url: string;
+  payload: string;
+  lastError: string | null;
+  retryCount: number;
+  failedAt: string;
+  expiresAt: string;
+}
+
 export type TransactionHistorySort =
   | "time_desc"
   | "time_asc"
@@ -102,3 +152,4 @@ export interface TransactionHistoryPageData {
   search: string;
   source: "live" | "sample";
 }
+
