@@ -6,7 +6,15 @@ if (typeof process !== "undefined" && process.env) {
 }
 
 export * from "./FluidClient";
-export * from "./errors";
+export {
+  FluidError,
+  FluidRequestError,
+  FluidNetworkError,
+  FluidServerError,
+  FluidConfigurationError,
+  FluidWalletError,
+  FluidNoAvailableServerError,
+} from "./errors";
 export * from "./soroban";
 export * from "./flutter";
 export {
@@ -30,3 +38,4 @@ export {
 } from "./stellarCompatibility";
 
 export * from "./testUtils/FluidMockClient";
+export * as ReactNative from "./react-native";

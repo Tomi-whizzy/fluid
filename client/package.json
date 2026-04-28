@@ -23,6 +23,10 @@
     "./worker": {
       "import": "./dist/workers/signingWorker.js",
       "types": "./dist/workers/signingWorker.d.ts"
+    },
+    "./react-native": {
+      "import": "./dist/react-native/index.js",
+      "types": "./dist/react-native/index.d.ts"
     }
   },
   "scripts": {
@@ -61,6 +65,7 @@
   "sideEffects": false,
   "dependencies": {
     "@stellar/stellar-sdk": "^11.3.0",
+    "commander": "^14.0.3",
     "dotenv": "^16.3.1"
   },
   "peerDependencies": {

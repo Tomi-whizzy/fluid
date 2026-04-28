@@ -262,6 +262,9 @@ importers:
       '@stellar/stellar-sdk':
         specifier: ^11.3.0
         version: 11.3.0(bare-url@2.4.0)
+      commander:
+        specifier: ^14.0.3
+        version: 14.0.3
       dotenv:
         specifier: ^16.3.1
         version: 16.6.1
