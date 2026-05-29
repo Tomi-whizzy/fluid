@@ -16,6 +16,12 @@ import {
   getTelemetryConfig,
   TelemetryConfig,
 } from "./telemetry";
+import {
+  SignTransactionOptions,
+  SignedTransaction,
+  TransactionInput,
+  WalletSigner,
+} from "./wallet";
 
 dotenv.config();
 
@@ -510,6 +516,45 @@ export class FluidClient {
     return await this.requestFeeBump(signedXdr, submit);
   }
 
+  /**
+   * Sign a transaction with any {@link WalletSigner} (WalletConnect, a SEP-43
+   * browser wallet, or an in-process keypair).
+   *
+   * The client's configured `networkPassphrase` is supplied to the signer by
+   * default so callers don't have to repeat it; pass `options.networkPassphrase`
+   * to override for a custom network.
+   */
+  async signWithWallet(
+    signer: WalletSigner,
+    transaction: TransactionInput,
+    options: SignTransactionOptions = {},
+  ): Promise<SignedTransaction> {
+    if (!signer || typeof signer.signTransaction !== "function") {
+      throw new Error("signWithWallet requires a WalletSigner");
+    }
+
+    return signer.signTransaction(transaction, {
+      networkPassphrase: this.networkPassphrase,
+      ...options,
+    });
+  }
+
+  /**
+   * Sign a transaction through a wallet and immediately request a fee bump for
+   * the signed envelope. This is the universal-signing entry point example
+   * applications should use: hand it any connected wallet and a built (but
+   * unsigned) transaction, and it returns the gasless fee-bump response.
+   */
+  async buildAndRequestFeeBumpWithWallet(
+    signer: WalletSigner,
+    transaction: TransactionInput,
+    submit: boolean = false,
+    options: SignTransactionOptions = {},
+  ): Promise<FeeBumpResponse> {
+    const signed = await this.signWithWallet(signer, transaction, options);
+    return this.requestFeeBump(signed.signedTxXdr, submit);
+  }
+
   async buildSACTransferTx(
     options: Omit<BuildSACTransferTxOptions, "networkPassphrase" | "sorobanServer">
   ): Promise<Transaction> {
@@ -577,6 +622,9 @@ export type { TelemetryConfig, TelemetryData } from "./telemetry";
 
 export { FluidQueue } from "./queue";
 export type { QueuedTransaction, FluidQueueCallbacks } from "./queue";
+
+// Universal wallet signing (WalletConnect standard bindings, SEP-43 adapters)
+export * from "./wallet";
 export {
   buildFeeBumpTransaction,
   createHorizonServer,

@@ -1,4 +1,10 @@
 import StellarSdk, { Horizon, Transaction, FeeBumpTransaction } from "@stellar/stellar-sdk";
+import {
+  SignTransactionOptions,
+  SignedTransaction,
+  TransactionInput,
+  WalletSigner,
+} from "./wallet";
 
 export interface FluidClientConfig {
   serverUrl?: string;
@@ -250,5 +256,39 @@ export class FluidClient {
     submit: boolean = false
   ): Promise<FeeBumpResponse> {
     return this.requestFeeBump(transaction, submit);
+  }
+
+  /**
+   * Sign a transaction with any {@link WalletSigner} (WalletConnect, a SEP-43
+   * browser wallet, or an in-process keypair), defaulting the network
+   * passphrase to the one this client was configured with.
+   */
+  async signWithWallet(
+    signer: WalletSigner,
+    transaction: TransactionInput,
+    options: SignTransactionOptions = {}
+  ): Promise<SignedTransaction> {
+    if (!signer || typeof signer.signTransaction !== "function") {
+      throw new Error("signWithWallet requires a WalletSigner");
+    }
+
+    return signer.signTransaction(transaction, {
+      networkPassphrase: this.networkPassphrase,
+      ...options,
+    });
+  }
+
+  /**
+   * Sign a transaction through a wallet and request a fee bump for the signed
+   * envelope. The universal-signing entry point for example applications.
+   */
+  async buildAndRequestFeeBumpWithWallet(
+    signer: WalletSigner,
+    transaction: TransactionInput,
+    submit: boolean = false,
+    options: SignTransactionOptions = {}
+  ): Promise<FeeBumpResponse> {
+    const signed = await this.signWithWallet(signer, transaction, options);
+    return this.requestFeeBump(signed.signedTxXdr, submit);
   }
 }

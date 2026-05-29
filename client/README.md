@@ -112,6 +112,53 @@ const { requestFeeBump, isLoading, error, result } = useFeeBump(client);
 - `error` contains the last thrown error, if any
 - `result` contains the latest successful fee-bump response
 
+## Universal Wallet Signing (WalletConnect)
+
+The client can sign fee-bump payloads through any Stellar wallet behind a single
+`WalletSigner` interface — WalletConnect sessions, SEP-43 browser wallets
+(Freighter, Stellar Wallets Kit, …), or an in-process keypair.
+
+```typescript
+import {
+  FluidClient,
+  createWalletConnectSigner,
+  buildStellarRequiredNamespaces,
+  STELLAR_CHAINS,
+} from "fluid-client";
+
+// 1. Open a WalletConnect session with the standard Stellar namespaces.
+const { uri, approval } = await signClient.connect({
+  requiredNamespaces: buildStellarRequiredNamespaces({
+    chains: [STELLAR_CHAINS.TESTNET],
+  }),
+});
+const session = await approval();
+
+// 2. Build a universal signer from the connected session.
+const signer = createWalletConnectSigner(signClient, session, {
+  networkPassphrase: StellarSdk.Networks.TESTNET,
+});
+
+// 3. Sign + fee-bump in one call (works for ANY WalletSigner).
+const result = await client.buildAndRequestFeeBumpWithWallet(signer, unsignedTx);
+```
+
+Client methods:
+
+- `signWithWallet(signer, transaction, options?)` - sign with any `WalletSigner`,
+  defaulting the network passphrase to the client configuration
+- `buildAndRequestFeeBumpWithWallet(signer, transaction, submit?, options?)` -
+  sign through a wallet and request a fee bump for the signed envelope
+
+Run the Node demo:
+
+```bash
+npm run demo:wallet-connect
+```
+
+See [WALLET_CONNECT.md](WALLET_CONNECT.md) for the full guide, the WalletConnect
+namespace reference, and the browser/Vue examples.
+
 ## Anonymous Usage Telemetry
 
 The Fluid SDK includes an optional, anonymous telemetry system to help maintainers understand SDK usage patterns.
