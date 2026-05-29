@@ -9,7 +9,6 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { UsageLeaderboard } from "@/components/dashboard/UsageLeaderboard";
 import { getTenantLeaderboard } from "@/lib/transaction-history";
 import { SpendChart } from "@/components/dashboard/SpendChart";
-import { getApiKeysPageData } from "@/lib/api-keys-data";
 import { Coins, CheckCircle, Wallet, Zap } from "lucide-react";
 import { getSpendForecastData } from "@/lib/spend-chart-data";
 import { getFeeMultiplierData } from "@/lib/fee-multiplier-data";
@@ -19,6 +18,7 @@ import { getExpenseBreakdownData } from "@/lib/expense-breakdown-data";
 import { getTreasuryCriticalBannerState } from "@/lib/treasury-critical-banner";
 import { AlertTriangle } from "lucide-react";
 import { LiveTransactionFeed } from "@/components/dashboard/LiveTransactionFeed";
+import { AdminGuidedTour } from "@/components/dashboard/AdminGuidedTour";
 
 export default async function AdminDashboard() {
   const session = await auth();
@@ -144,7 +144,15 @@ export default async function AdminDashboard() {
         <section className="mt-6 space-y-6">
           <div className="flex flex-wrap gap-3">
             <Link
+              href="/admin/api-keys"
+              data-tour-step="create-key"
+              className="inline-flex min-h-11 items-center justify-center rounded-full bg-slate-950 px-6 text-sm font-black text-white transition hover:shadow-xl hover:-translate-y-0.5"
+            >
+              Create key
+            </Link>
+            <Link
               href="/admin/billing"
+              data-tour-step="billing-config"
               className="inline-flex min-h-11 items-center justify-center rounded-full border border-primary/30 bg-primary/10 px-6 text-sm font-black text-primary transition hover:shadow-lg hover:-translate-y-0.5"
             >
               Billing & Quota
@@ -169,6 +177,7 @@ export default async function AdminDashboard() {
             </Link>
             <Link
               href="/admin/signers"
+              data-tour-step="manage-signer-pool"
               className="inline-flex min-h-11 items-center justify-center rounded-full border border-border/50 glass  px-6 text-sm font-black text-foreground transition hover:shadow-lg hover:-translate-y-0.5"
             >
               Manage signer pool
@@ -186,6 +195,7 @@ export default async function AdminDashboard() {
           <UsageLeaderboard rows={tenantUsage} />
         </section>
       </main>
+      <AdminGuidedTour userKey={session?.user?.id ?? session?.user?.email ?? "anonymous"} />
     </div>
   );
 }
